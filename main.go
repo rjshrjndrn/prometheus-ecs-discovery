@@ -152,7 +152,8 @@ type PrometheusTaskInfo struct {
 //                }
 //              ],
 //     ...
-func (t *AugmentedTask) ExporterInformation() []*ScrapeConfig {
+
+func (t *AugmentedTask) ExporterInformation(jobInserted map[string]*ScrapeConfig) []*ScrapeConfig {
 	ret := []*ScrapeConfig{}
 	var host string
 	var ip string
@@ -302,34 +303,53 @@ func (t *AugmentedTask) ExporterInformation() []*ScrapeConfig {
 		    labels.Scheme = scheme
 		}
 
-// - targets:
-//   - 10.0.2.11:8888
-//   labels:
-//     task_arn: arn:aws:ecs:eu-central-1:998611063711:task/openreplay/304ab152cdc14bafab22c15cfcd5d746
-//     task_name: saas-sink
-//     task_revision: "21"
-//     task_group: service:sink
-//     cluster_arn: arn:aws:ecs:eu-central-1:998611063711:cluster/openreplay
-//     container_name: saas-sink
-//     container_arn: arn:aws:ecs:eu-central-1:998611063711:container/openreplay/304ab152cdc14bafab22c15cfcd5d746/94b9727c-7a13-473e-a6ad-1cdc346bac3a
-//     docker_image: 998611063711.dkr.ecr.eu-central-1.amazonaws.com/saas-sink
+    // - targets:
+    //   - 10.0.2.11:8888
+    //   labels:
+    //     task_arn: arn:aws:ecs:eu-central-1:998611063711:task/openreplay/304ab152cdc14bafab22c15cfcd5d746
+    //     task_name: saas-sink
+    //     task_revision: "21"
+    //     task_group: service:sink
+    //     cluster_arn: arn:aws:ecs:eu-central-1:998611063711:cluster/openreplay
+    //     container_name: saas-sink
+    //     container_arn: arn:aws:ecs:eu-central-1:998611063711:container/openreplay/304ab152cdc14bafab22c15cfcd5d746/94b9727c-7a13-473e-a6ad-1cdc346bac3a
+    //     docker_image: 998611063711.dkr.ecr.eu-central-1.amazonaws.com/saas-sink
 
 
-// scrape_configs:
-// - job_name: "sink"
-//   scrape_interval: "30s"
-//   static_configs:
-//     - targets: ["10.0.5.63:6060"]
+    // scrape_configs:
+    // - job_name: "sink"
+    //   scrape_interval: "30s"
+    //   static_configs:
+    //     - targets: ["10.0.5.63:6060"]
 
     test := StaticConfig{
 			Targets: []string{fmt.Sprintf("%s:6060", host)},
     }
-		ret = append(ret, &ScrapeConfig{
-			JobName:       *t.TaskDefinition.Family,
-      ScrapeInterval: "30s",
-      StaticConfigs: []StaticConfig{test},
-      labels: labels,
-		})
+
+    log.Printf("%s%v","Joined Map\n", jobInserted )
+
+    v, exist := jobInserted[*t.TaskDefinition.Family]
+    if exist { 
+      log.Print("Existing Joined Map\n", jobInserted, "\n" )
+      log.Print("Existing config: ", *t.TaskDefinition)
+      test := StaticConfig{
+        Targets: []string{fmt.Sprintf("%s:6060", host)},
+      }
+      v.addTarget(test)
+    } else {
+      log.Print("Joined Map\n", jobInserted, "\n" )
+      log.Print("Not Existing config: ", *t.TaskDefinition)
+      tmp := ScrapeConfig{
+        JobName:       *t.TaskDefinition.Family,
+        ScrapeInterval: "30s",
+        StaticConfigs: []StaticConfig{test},
+        labels: labels,
+      }
+      log.Print("\nJoining, ",*t.TaskDefinition.Family, tmp, "\n")
+      jobInserted[*t.TaskDefinition.Family] = &tmp
+      log.Print("jobInserted dict", jobInserted)
+      ret = append(ret, &tmp)
+    }
 	}
 	return ret
 }
@@ -339,11 +359,16 @@ func (t *AugmentedTask) ExporterInformation() []*ScrapeConfig {
 // }
 
 type Phlare struct {
-	ScrapeConfigs []*ScrapeConfig `yaml:"scrape_configs"`
+  ScrapeConfigs []*ScrapeConfig `yaml:"scrape_configs"`
 }
 type StaticConfig struct {
   Targets []string `yaml:"targets"`
 }
+
+func (sc *ScrapeConfig) addTarget(ip StaticConfig)  {
+  sc.StaticConfigs = append(sc.StaticConfigs,ip)
+}
+
 type ScrapeConfig struct {
   JobName        string `yaml:"job_name"` 
   ScrapeInterval string `yaml:"scrape_interval"` 
@@ -699,8 +724,11 @@ func main() {
 			return
 		}
 		infos := []*ScrapeConfig{}
+      // [serice_name] => Address of scrapeconfig
+    jobInserted := make(map[string]*ScrapeConfig)
+
 		for _, t := range tasks {
-			info := t.ExporterInformation()
+			info := t.ExporterInformation(jobInserted)
 			infos = append(infos, info...)
 		}
     data := Phlare{
