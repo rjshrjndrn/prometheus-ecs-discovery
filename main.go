@@ -326,28 +326,17 @@ func (t *AugmentedTask) ExporterInformation(jobInserted map[string]*ScrapeConfig
 			Targets: []string{fmt.Sprintf("%s:6060", host)},
     }
 
-    log.Printf("%s%v","Joined Map\n", jobInserted )
-
     v, exist := jobInserted[*t.TaskDefinition.Family]
     if exist { 
-      log.Print("Existing Joined Map\n", jobInserted, "\n" )
-      log.Print("Existing config: ", *t.TaskDefinition)
-      test := StaticConfig{
-        Targets: []string{fmt.Sprintf("%s:6060", host)},
-      }
-      v.addTarget(test)
+      v.StaticConfigs[0].addTarget(fmt.Sprintf("%s:6060", host))
     } else {
-      log.Print("Joined Map\n", jobInserted, "\n" )
-      log.Print("Not Existing config: ", *t.TaskDefinition)
       tmp := ScrapeConfig{
         JobName:       *t.TaskDefinition.Family,
         ScrapeInterval: "30s",
         StaticConfigs: []StaticConfig{test},
         labels: labels,
       }
-      log.Print("\nJoining, ",*t.TaskDefinition.Family, tmp, "\n")
       jobInserted[*t.TaskDefinition.Family] = &tmp
-      log.Print("jobInserted dict", jobInserted)
       ret = append(ret, &tmp)
     }
 	}
@@ -365,15 +354,15 @@ type StaticConfig struct {
   Targets []string `yaml:"targets"`
 }
 
-func (sc *ScrapeConfig) addTarget(ip StaticConfig)  {
-  sc.StaticConfigs = append(sc.StaticConfigs,ip)
+func (sc *StaticConfig) addTarget(ip string)  {
+  sc.Targets = append(sc.Targets,ip)
 }
 
 type ScrapeConfig struct {
   JobName        string `yaml:"job_name"` 
   ScrapeInterval string `yaml:"scrape_interval"` 
   StaticConfigs  []StaticConfig `yaml:"static_configs"`
-  labels labels
+  labels labels `yaml:"labels"`
 }
 
 // AddTaskDefinitionsOfTasks adds to each Task the TaskDefinition
@@ -724,7 +713,14 @@ func main() {
 			return
 		}
 		infos := []*ScrapeConfig{}
-      // [serice_name] => Address of scrapeconfig
+
+    // Have to aggregate all container ips of same job
+    // So that we can use static config.
+    // job:
+    //   targets:
+    //      - ip1
+    //      - ip2
+    // [serice_name] => Address of scrapeconfig
     jobInserted := make(map[string]*ScrapeConfig)
 
 		for _, t := range tasks {
