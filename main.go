@@ -19,6 +19,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	// "go/types"
 	"io/ioutil"
 	"log"
 	"strconv"
@@ -65,6 +66,7 @@ var prometheusFilterLabel = flag.String("config.filter-label", "", "Docker label
 var prometheusServerNameLabel = flag.String("config.server-name-label", "PROMETHEUS_EXPORTER_SERVER_NAME", "Docker label to define the server name")
 var prometheusJobNameLabel = flag.String("config.job-name-label", "PROMETHEUS_EXPORTER_JOB_NAME", "Docker label to define the job name")
 var prometheusDynamicPortDetection = flag.Bool("config.dynamic-port-detection", false, fmt.Sprintf("If true, only tasks with the Docker label %s=1 will be scraped", dynamicPortLabel))
+var prometheusStaticPort = flag.String("config.static-port", "6060", "Custom port to be scrapped")
 
 // logError is a convenience function that decodes all possible ECS
 // errors and displays them to standard error.
@@ -150,8 +152,8 @@ type PrometheusTaskInfo struct {
 //                }
 //              ],
 //     ...
-func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
-	ret := []*PrometheusTaskInfo{}
+func (t *AugmentedTask) ExporterInformation() []*ScrapeConfig {
+	ret := []*ScrapeConfig{}
 	var host string
 	var ip string
 
@@ -300,12 +302,53 @@ func (t *AugmentedTask) ExporterInformation() []*PrometheusTaskInfo {
 		    labels.Scheme = scheme
 		}
 
-		ret = append(ret, &PrometheusTaskInfo{
-			Targets: []string{fmt.Sprintf("%s:%d", host, hostPort)},
-			Labels:  labels,
+// - targets:
+//   - 10.0.2.11:8888
+//   labels:
+//     task_arn: arn:aws:ecs:eu-central-1:998611063711:task/openreplay/304ab152cdc14bafab22c15cfcd5d746
+//     task_name: saas-sink
+//     task_revision: "21"
+//     task_group: service:sink
+//     cluster_arn: arn:aws:ecs:eu-central-1:998611063711:cluster/openreplay
+//     container_name: saas-sink
+//     container_arn: arn:aws:ecs:eu-central-1:998611063711:container/openreplay/304ab152cdc14bafab22c15cfcd5d746/94b9727c-7a13-473e-a6ad-1cdc346bac3a
+//     docker_image: 998611063711.dkr.ecr.eu-central-1.amazonaws.com/saas-sink
+
+
+// scrape_configs:
+// - job_name: "sink"
+//   scrape_interval: "30s"
+//   static_configs:
+//     - targets: ["10.0.5.63:6060"]
+
+    test := StaticConfig{
+			Targets: []string{fmt.Sprintf("%s:6060", host)},
+    }
+		ret = append(ret, &ScrapeConfig{
+			JobName:       *t.TaskDefinition.Family,
+      ScrapeInterval: "30s",
+      StaticConfigs: []StaticConfig{test},
+      labels: labels,
 		})
 	}
 	return ret
+}
+// type PrometheusTaskInfo struct {
+// 	Targets []string `yaml:"targets"`
+// 	Labels  labels   `yaml:"labels"`
+// }
+
+type Phlare struct {
+	ScrapeConfigs []*ScrapeConfig `yaml:"scrape_configs"`
+}
+type StaticConfig struct {
+  Targets []string `yaml:"targets"`
+}
+type ScrapeConfig struct {
+  JobName        string `yaml:"job_name"` 
+  ScrapeInterval string `yaml:"scrape_interval"` 
+  StaticConfigs  []StaticConfig `yaml:"static_configs"`
+  labels labels
 }
 
 // AddTaskDefinitionsOfTasks adds to each Task the TaskDefinition
@@ -655,12 +698,15 @@ func main() {
 			logError(err)
 			return
 		}
-		infos := []*PrometheusTaskInfo{}
+		infos := []*ScrapeConfig{}
 		for _, t := range tasks {
 			info := t.ExporterInformation()
 			infos = append(infos, info...)
 		}
-		m, err := yaml.Marshal(infos)
+    data := Phlare{
+      infos,
+    }
+		m, err := yaml.Marshal(data)
 		if err != nil {
 			logError(err)
 			return
